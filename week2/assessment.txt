@@ -1,0 +1,60 @@
+1. For classifying product names to categories:
+
+	a. What precision (P@1) were you able to achieve?
+		N       9669
+		P@1     0.649
+		R@1     0.649
+
+	b. What fastText parameters did you use?
+		~/fastText-0.9.2/fasttext supervised -input training_data.txt -output model -lr 1.0 -epoch 25 -wordNgrams 2
+
+	c. How did you transform the product names?
+		cat /workspace/datasets/fasttext/shuffled_labeled_products.txt |sed -e "s/\([.\!?,'/()]\)/ \1 /g" | tr "[:upper:]" "[:lower:]" | sed "s/[^[:alnum:]_]/ /g" | tr -s ' ' > /workspace/datasets/fasttext/normalized_labeled_products.txt
+
+	d. How did you prune infrequent category labels, and how did that affect your precision?
+		Skipped
+
+	e. How did you prune the category tree, and how did that affect your precision?
+		Skipped
+
+2. For deriving synonyms from content:
+
+	a. What were the results for your best model in the tokens used for evaluation?
+		~/fastText-0.9.2/fasttext nn /workspace/datasets/fasttext/title_model.bin
+		Query word? plasma
+		600hz 0.856776
+		73 0.819914
+		58 0.818652
+		63 0.813085
+		hdtvs 0.810568
+		480hz 0.806962
+		hdtv 0.801321
+		xbr 0.792323
+		240hz 0.787803
+		120hz 0.787485
+
+	b. What fastText parameters did you use?
+		 ~/fastText-0.9.2/fasttext skipgram -input /workspace/datasets/fasttext/normalized_titles.txt -output /workspace/datasets/fasttext/title_model
+	
+	c. How did you transform the product names?
+		cat /workspace/datasets/fasttext/titles.txt | sed -e "s/\([.\!?,'/()]\)/ \1 /g" | tr "[:upper:]" "[:lower:]" | sed "s/[^[:alnum:]]/ /g" | tr -s ' ' > /workspace/datasets/fasttext/normalized_titles.txt
+
+3. For integrating synonyms with search:
+
+	a. How did you transform the product names (if different than previously)?
+		import fasttext
+		model = fasttext.load_model('/workspace/datasets/fasttext/title_model.bin')
+		file = open('/workspace/datasets/fasttext/top_words.txt','r')
+		threshold = 0.75
+		for word in file.readlines():
+			word = word.replace('\n', '')
+			neighbors = [x[1] for x in list(filter(lambda x: x[0] >= threshold, model.get_nearest_neighbors(word)))]
+			if len(neighbors) > 0:
+				print(word + ',' + ','.join(neighbors))
+
+	b. What threshold score did you use?
+		0.75
+
+	c. Were you able to find the additional results by matching synonyms?
+		No.
+
