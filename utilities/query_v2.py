@@ -12,11 +12,17 @@ import pandas as pd
 import fileinput
 import logging
 import sys
+import fasttext
+import re
+import nltk
 
+stemmer = nltk.stem.PorterStemmer()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logging.basicConfig(format='%(levelname)s:%(message)s')
+
+query_model = fasttext.load_model('/workspace/datasets/fasttext/query_model.bin')
 
 # expects clicks and impressions to be in the row
 def create_prior_queries_from_group(
@@ -48,6 +54,17 @@ def create_prior_queries(doc_ids, doc_id_weights,
                 pass  # nothing to do in this case, it just means we can't find priors for this doc
     return click_prior_query
 
+def normalize_query(query):
+    query = query.lower()
+    query = re.sub("[^0-9a-zA-Z]+", " ", query)
+    query = re.sub("\s\s+", " ", query)
+
+    tokens = []
+    for token in query.split():
+	    tokens.append(stemmer.stem(token))
+    query = " ".join(tokens)
+
+    return query
 
 # Hardcoded query here.  Better to use search templates or other query config.
 def create_query(user_query, click_prior_query, filters, sort="_score", sortDir="desc", size=10, source=None, use_synonyms=False):
@@ -189,13 +206,44 @@ def create_query(user_query, click_prior_query, filters, sort="_score", sortDir=
     return query_obj
 
 
-def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", use_synonyms=False):
+def search(client, user_query, index="bbuy_products", sort="_score", sortDir="desc", use_synonyms=False, use_filter=False):
     #### W3: classify the query
+    candidate_count = 5
+    normalized_query = normalize_query(user_query)
+    categories, probabilities = query_model.predict(normalized_query, k=candidate_count)
+
+    print(categories)
+    print(probabilities)
+
+    predicited_categoties = []
+
+    category_threshold = 0.3
+    for i in range(len(categories)):
+        if probabilities[i] > category_threshold:
+            current_category = categories[i].replace("__label__", "")
+            predicited_categoties.append(current_category)
+        else:
+            break
+
     #### W3: create filters and boosts
+    filters = []
+
+    if use_filter and predicited_categoties:
+        cat_filter = {
+            "terms": {
+                "categoryPathIds.keyword": predicited_categoties
+            }
+        }
+        filters.append(cat_filter)
+
     # Note: you may also want to modify the `create_query` method above
-    query_obj = create_query(user_query, click_prior_query=None, filters=[], sort=sort, sortDir=sortDir, source=["name", "shortDescription"], use_synonyms=use_synonyms)
+    query_obj = create_query(user_query, click_prior_query=None, filters=filters, sort=sort, sortDir=sortDir, source=["name", "shortDescription"], use_synonyms=use_synonyms)
     logging.info(query_obj)
+    print("### Query")
+    print(query_obj)
     response = client.search(query_obj, index=index)
+    print("### Repsonse")
+    print(response)
     if response and response['hits']['hits'] and len(response['hits']['hits']) > 0:
         hits = response['hits']['hits']
         print(json.dumps(response, indent=2))
@@ -216,6 +264,7 @@ if __name__ == "__main__":
     general.add_argument('--user',
                          help='The OpenSearch admin.  If this is set, the program will prompt for password too. If not set, use default of admin/admin')
     general.add_argument("--synonyms", action=argparse.BooleanOptionalAction, help="Whether to query the product title or synonyms")
+    general.add_argument("--filter", action=argparse.BooleanOptionalAction, help="Whether to filter query the product classification")
 
     args = parser.parse_args()
 
@@ -249,6 +298,6 @@ if __name__ == "__main__":
         query = line.rstrip()
         if query == "Exit":
             break
-        search(client=opensearch, user_query=query, index=index_name, use_synonyms=args.synonyms)
+        search(client=opensearch, user_query=query, index=index_name, use_synonyms=args.synonyms, use_filter=args.filter)
 
         print(query_prompt)
